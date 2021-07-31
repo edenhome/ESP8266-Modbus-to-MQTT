@@ -11,8 +11,8 @@
 #include "config.h"
 
 #include <ModbusMaster.h> 
-#define MAX485_DE  0 // D0
-#define MAX485_RE  16  // D1
+#define MAX485_DE  0 // D3 - GPIO 0  
+#define MAX485_RE  16  // D0 - GPIO 16
 static uint8_t DPMAddr = 0x01; 
 ModbusMaster node;  
 
@@ -21,7 +21,8 @@ ModbusMaster node;
 SoftwareSerial DPMSerial;
 
 unsigned long startTime;
-
+float last3m;
+float new3m;
 
 const char *ssid = SSID; //replace this with your wifi  name
 const char *password = WIFI_PASSWORD; //replace with your wifi password
@@ -33,7 +34,7 @@ const long utcOffsetInSeconds = 25200; // utc + 7 hour
 
 
 
-#define WHOAMI "MainWatermeter"
+#define WHOAMI "PoolWatermeter"
 
 int lcdColumns = 16;
 int lcdRows = 2;
@@ -74,6 +75,7 @@ void wifiSetup(const char *hostname) {
   // Wait for connection. ==> We will hang here in RUN mode forever without a WiFi!
   while (WiFi.status() != WL_CONNECTED) {
     delay(50);
+    Serial.print(" WIFI connecting");
   }
 }
 
@@ -84,16 +86,18 @@ void reconnect(){
       while (WiFi.status() != WL_CONNECTED) {
         lcd.clear();
         lcd.print(" WIFI error");  
+        Serial.print(" WIFI error"); 
         delay(500);
     }
   }
 
-  if ( client.connect("ESP8266 Device", mqttUser, mqttPassword)){
+  if ( client.connect(WHOAMI, mqttUser, mqttPassword)){
 
   }
   else {
     lcd.clear();
     lcd.print(" MQTT error");
+    Serial.print(" MQTT error");
     delay( 5000 );
   }
   }
@@ -122,10 +126,10 @@ void OTA(){
 
 
 void setup(){
-  Wire.begin();
-  // Start WiFI
-  wifiSetup(WHOAMI);
-  OTA();
+  Wire.begin(); 
+  
+  wifiSetup(WHOAMI); // Start WiFI
+  OTA(); // Setup OTA
   timeClient.begin(); // Start Time client
   client.setServer(mqttServer, 1883 ); //default port for mqtt is 1883
   lcd.init(); 
@@ -134,7 +138,7 @@ void setup(){
 
 
   Serial.begin(115200);   
-  DPMSerial.begin(9600,SWSERIAL_8N1,12,14);   // R0 = GPIO4 = D2,,,, DI = GPIO0 = D3
+  DPMSerial.begin(9600,SWSERIAL_8N1,12,14);   // R0 = GPIO12 = D6,,,, DI = GPIO14 = D5
 
   pinMode(MAX485_RE, OUTPUT); 
   pinMode(MAX485_DE, OUTPUT);
@@ -166,12 +170,12 @@ void read(){
   result = node.readHoldingRegisters(0x0000, 4);
   if (result == node.ku8MBSuccess){
     
-    float m3 = bcd_to_ui32(node.getResponseBuffer(0)) + (bcd_to_ui32(node.getResponseBuffer(1)) * 0.0001);
-    Serial.println(m3);
+    new3m = bcd_to_ui32(node.getResponseBuffer(0)) + (bcd_to_ui32(node.getResponseBuffer(1)) * 0.0001);
+    Serial.println(new3m);
     //lcd.setCursor(0, 0);
     lcd.clear();
     lcd.print("Water ");
-    lcd.print(m3);
+    lcd.print(new3m);
     lcd.print("m3");
     float lh = bcd_to_ui32(node.getResponseBuffer(2)) + (bcd_to_ui32(node.getResponseBuffer(3)) * 0.0001);
     
@@ -187,6 +191,7 @@ void read(){
   else{
     lcd.clear();
     lcd.print(" Modbus error");
+    Serial.println(" Modbus error");
   }
 }
 
@@ -217,12 +222,13 @@ void mqttpost(){
   payload.toCharArray(charBuff,payload.length() + 1);
             
   String topic = "Watermeter/";
-  topic +=  "Main";
+  topic +=  WHOAMI;
   const char* msg = topic.c_str();
            
   client.publish( msg , charBuff);
-
+  Serial.println(" MQTT post");
 }
+
 
 
 
@@ -232,11 +238,13 @@ void loop(){
 
   if(!client.connected()){
     reconnect();
+    //Serial.println(" Reconecting");
   }
      
   if(millis() - startTime >= 5000){
     read(); // 5 seconds have elapsed. ... do something interesting ...
     mqttpost();
+    
     startTime = millis();
   }
   
